@@ -4,6 +4,10 @@ from tkinter import messagebox
 from tkinter import ttk
 import webbrowser
 import platform
+import secrets
+
+def generate_token(length = 16):
+    return secrets.token_hex(length)
 
 def get_operating_system(verbose=False):
     # Get the operating system name
@@ -28,17 +32,20 @@ def get_operating_system(verbose=False):
         # TODO: Add functionality for what to do when unsupported.
 
 
-DO_WSL = False
+#DO_WSL = False
+
+PYENV = "~/.pyenv/bin/pyenv"
 
 def make_wsl(command, DO_WSL):
     if DO_WSL:
-        return ["wsl", "bash", "-c", command]
+        return f"wsl {command}"
     else:
         return [command]
 
-def activate_environment(environment):
-    command = f"source activate {environment}"
-    subprocess.run(make_wsl(command, DO_WSL))
+
+# def activate_environment(environment):
+#     command = f"source activate {environment}"
+#     subprocess.run(make_wsl(command, DO_WSL))
 
 def launch_jupyter(server_type, environment):
     if server_type == "Jupyter Lab":
@@ -46,43 +53,61 @@ def launch_jupyter(server_type, environment):
         url = "http://localhost:8888/lab"
     else:
         package = "notebook"
-        url = "http://localhost:8888/tree"
+        url = "http://localhost:8888/?token="
 
-    check_command = f"pip show {package}"
-    result = subprocess.run(make_wsl(check_command, DO_WSL), shell=True, capture_output=True, text=True)
-        
-    env_command = f"source activate {environment}"
+    check_command = f"bash -c pip show {package}"
+
+    print(check_command)
+    # result = subprocess.run(make_wsl(check_command, True), shell=True, capture_output=True, text=True)
+    result = subprocess.run(["wsl", "bash", "-c", "~/.pyenv/shims/pip show notebook"], shell=False, capture_output=True, text=True)
+    
 
     if result.returncode == 0:
-        launch_command = f"jupyter {package}"# --no-browser"
-        # command = f"{env_command} && {launch_command}"
-        command = f"{env_command}"
-        # subprocess.Popen(make_wsl("pyenv virtualenvs", DO_WSL), shell=True)
-        # subprocess.Popen(["bash", "-c"]+ make_wsl("pyenv virtualenvs; source activate sandbox_3.11.3", DO_WSL), shell=True)
-        subprocess.Popen(["bash", "-c"]+ make_wsl("pyenv virtualenvs", DO_WSL), shell=True)
-        # webbrowser.open(url)
+        notebook_token = generate_token()
+
+        commands = (f"source activate_alt {environment}"+
+            f"&& {PYENV} version"+
+            "&& ~/.pyenv/shims/pip show notebook"+
+            # "&& ~/.pyenv/shims/jupyter notebook")
+            f"&& ~/.pyenv/shims/jupyter notebook --no-browser --NotebookApp.token={notebook_token}")
+        print(f"Python environment: {environment}")
+        print(f"Jupyter Notebook is running at:\n{url+notebook_token}")
+        webbrowser.open(url+notebook_token)
+        result = subprocess.run(["wsl", "bash", "-c", commands], 
+                         shell=False, capture_output=True, text=True)
     else:
         messagebox.showerror("Error", f"{package} is not installed in the selected environment.")
 
 root = tk.Tk()
-root.title("Python Maatwerk 1.0")
+HEIGHT = 200
+WIDTH = 300
+
+root.geometry(f"{WIDTH}x{HEIGHT}")  # Set the width and height of the window
+root.title("PySelect 1.0")
 
 # Create and configure the dropdown menu
 ################### Environments
-def get_virtualenvs(wsl = False):
-    command = "pyenv virtualenvs"
+def get_virtualenvs(DO_WSL = False):
+    command = f"{PYENV} virtualenvs"
+    # process = subprocess.Popen(make_wsl(command, DO_WSL), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # output, _ = process.communicate()
+    # output = output.decode().strip()
 
-    process = subprocess.Popen(make_wsl(command, DO_WSL), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    
-    output, _ = process.communicate()
-    output = output.decode().strip()
-    
-    return parse_virtualenvs(output)
+    output = subprocess.run(
+        make_wsl(command, DO_WSL),
+        capture_output=True,
+        text=True,
+        shell=False
+    )
+    if output.returncode != 0:
+        print(f"Error executing command: {output.stderr}")
+
+    return parse_virtualenvs(output.stdout)
     
 
 def parse_virtualenvs(output):
      # Split the output into individual lines
-    lines = output.split('\n')
+    lines = output.strip().split('\n')
 
     # Initialize two empty lists to store environment names
     env_names = []
@@ -135,16 +160,19 @@ def main():
     operating_system = get_operating_system()
     print(operating_system)
     
-
-
+    DO_WSL = True if operating_system == "Windows" else False
 
     # Example usage
-    environments = get_virtualenvs(wsl= False)
+    environments = get_virtualenvs(DO_WSL)
     #######################
 
     selected_environment = tk.StringVar(root)
     selected_environment.set(environments[0])
-    environment_combobox = ttk.Combobox(root, textvariable=selected_environment, values=environments)
+
+    environment_combobox = ttk.Combobox(root, 
+                                        textvariable=selected_environment, 
+                                        values=environments, 
+                                        width=max(len(env) for env in environments)+2)
     environment_combobox.pack()
 
     # Create and configure the radio buttons
