@@ -31,52 +31,60 @@ def get_operating_system(verbose=False):
         return "Unsupported"
         # TODO: Add functionality for what to do when unsupported.
 
+CONDA_path = "~/miniconda3/etc/profile.d/conda.sh"
+def run_command(command, # str of commands
+                isWSL=True, 
+                isBash=True, 
+                conda=False,
+                conda_env=None,
+                shell=False, 
+                capture_output=True, 
+                text=True):
+    if conda_env is not None: conda = True
 
-#DO_WSL = False
+    command_list = []
+    if isWSL: command_list.append("wsl")
+    if isBash: command_list += ["bash", "-c"]
+    
+    payload = []
+    if conda: payload.append(f". {CONDA_path}")
+    if conda_env is not None:
+        payload.append(f"conda activate {conda_env}")
+    payload.append(command)
+    payload = " && ".join(payload)
 
-PYENV = "~/.pyenv/bin/pyenv"
+    command_list.append(payload)
 
-def make_wsl(command, DO_WSL):
-    if DO_WSL:
-        return f"wsl {command}"
-    else:
-        return [command]
-
-
-# def activate_environment(environment):
-#     command = f"source activate {environment}"
-#     subprocess.run(make_wsl(command, DO_WSL))
+    # print(command_list)
+    result = subprocess.run(command_list, 
+                    shell=False, capture_output=True, text=True)
+    return(result)
 
 def launch_jupyter(server_type, environment):
     if server_type == "Jupyter Lab":
-        package = "jupyterlab"
-        url = "http://localhost:8888/lab"
+        package = "lab"
+        pip_name = "jupyterlab"
+        url = "http://localhost:8888/lab?token="
     else:
-        package = "notebook"
+        package = pip_name = "notebook"
         url = "http://localhost:8888/?token="
 
-    check_command = f"bash -c pip show {package}"
 
-    print(check_command)
-    # result = subprocess.run(make_wsl(check_command, True), shell=True, capture_output=True, text=True)
-    result = subprocess.run(["wsl", "bash", "-c", "~/.pyenv/shims/pip show notebook"], shell=False, capture_output=True, text=True)
-    
+
+    print(environment)
+    result = run_command(f"pip show {pip_name}", conda_env=environment)
+    # print(result.returncode)
 
     if result.returncode == 0:
-        notebook_token = generate_token()
+        token = generate_token()
+        command = f"jupyter {package} --no-browser --NotebookApp.token={token}"
 
-        commands = (f"source activate_alt {environment}"+
-            f"&& {PYENV} version"+
-            "&& ~/.pyenv/shims/pip show notebook"+
-            # "&& ~/.pyenv/shims/jupyter notebook")
-            f"&& ~/.pyenv/shims/jupyter notebook --no-browser --NotebookApp.token={notebook_token}")
         print(f"Python environment: {environment}")
-        print(f"Jupyter Notebook is running at:\n{url+notebook_token}")
-        webbrowser.open(url+notebook_token)
-        result = subprocess.run(["wsl", "bash", "-c", commands], 
-                         shell=False, capture_output=True, text=True)
+        print(f"{server_type} is running at:\n{url+token}")
+        webbrowser.open(url+token)
+        result = run_command(command, conda=True, conda_env=environment)
     else:
-        messagebox.showerror("Error", f"{package} is not installed in the selected environment.")
+        messagebox.showerror("Error", f"{server_type} is not installed in the {environment} environment.")
 
 root = tk.Tk()
 HEIGHT = 200
@@ -87,49 +95,18 @@ root.title("PySelect 1.0")
 
 # Create and configure the dropdown menu
 ################### Environments
-def get_virtualenvs(DO_WSL = False):
-    command = f"{PYENV} virtualenvs"
-    # process = subprocess.Popen(make_wsl(command, DO_WSL), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    # output, _ = process.communicate()
-    # output = output.decode().strip()
+def get_virtualenvs():
+    output = run_command("conda info --envs", conda=True)
 
-    output = subprocess.run(
-        make_wsl(command, DO_WSL),
-        capture_output=True,
-        text=True,
-        shell=False
-    )
     if output.returncode != 0:
         print(f"Error executing command: {output.stderr}")
 
     return parse_virtualenvs(output.stdout)
-    
 
-def parse_virtualenvs(output):
-     # Split the output into individual lines
-    lines = output.strip().split('\n')
+def parse_virtualenvs(out):
+    envs = out.strip().split('\n')[2:]
+    return sorted([x.split()[0] for x in envs])
 
-    # Initialize two empty lists to store environment names
-    env_names = []
-    env_paths = []
-
-    # Loop through each line
-    for line in lines:
-
-        # Extract the environment name and path
-        env_path = line.split(' (')[0].strip()
-        env_name = env_path.split('/')[-1].strip()
-
-        # Add to the respective lists only if the environment name is not already present
-        if env_name not in env_names:
-            env_names.append(env_name)
-            env_paths.append(env_path)
-
-    # Sort the lists alphabetically
-    # env_names.sort()
-    env_paths.sort()
-
-    return env_paths
 
 def main():
 
@@ -143,27 +120,12 @@ def main():
         # activate_environment(selected_environment)
         launch_jupyter("Jupyter Lab", selected_environment)
 
-    def launch_terminal():
-        selected_environment = environment_combobox.get()
-        # activate_environment(selected_environment)
-        env_command = f"source activate {selected_environment}; ipython; import mod"
-        # subprocess.Popen(make_wsl(env_command, DO_WSL), shell=True)
-
-        # TODO: Does not activate venv correctly, need to fix.
-        process = subprocess.Popen(make_wsl(env_command, DO_WSL), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    
-        output, _ = process.communicate()
-        output = output.decode().strip()
-        print(output)
-
 
     operating_system = get_operating_system()
     print(operating_system)
     
-    DO_WSL = True if operating_system == "Windows" else False
-
     # Example usage
-    environments = get_virtualenvs(DO_WSL)
+    environments = get_virtualenvs()
     #######################
 
     selected_environment = tk.StringVar(root)
@@ -180,13 +142,11 @@ def main():
     server_type.set("Jupyter Notebook")
     radio_button_notebook = ttk.Radiobutton(root, text="Jupyter Notebook", variable=server_type, value="Jupyter Notebook")
     radio_button_lab = ttk.Radiobutton(root, text="Jupyter Lab", variable=server_type, value="Jupyter Lab")
-    radio_button_terminal = ttk.Radiobutton(root, text="Terminal", variable=server_type, value="Terminal")
     radio_button_lab.pack()
     radio_button_notebook.pack()
-    radio_button_terminal.pack()
 
     # Create the launch button
-    launch_button = ttk.Button(root, text="Launch", command=lambda: launch_jupyter_lab() if server_type.get() == "Jupyter Lab" else (launch_jupyter_notebook() if server_type.get() == "Jupyter Notebook" else launch_terminal()))
+    launch_button = ttk.Button(root, text="Launch", command=lambda: launch_jupyter_lab() if server_type.get() == "Jupyter Lab" else launch_jupyter_notebook())
     launch_button.pack()
 
     root.mainloop()
